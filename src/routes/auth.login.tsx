@@ -406,18 +406,15 @@ function LoginPage() {
               </Button>
             </form>
           ) : (
-            /* STEP 2: Enter 6-digit OTP or Click Email Button */
+            /* STEP 2: Enter 6-digit OTP Code */
             <form onSubmit={onVerifyAdminOtp} className="space-y-4">
-              <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 text-xs text-foreground space-y-2">
+              <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-foreground space-y-1">
                 <div className="flex items-center gap-2 font-semibold text-primary">
                   <span className="flex h-2 w-2 rounded-full bg-primary animate-ping" />
-                  <span>Email Dispatched! Check your Inbox</span>
+                  <span>OTP Code Sent to your Email</span>
                 </div>
-                <p className="text-muted-foreground text-[11px] leading-relaxed">
-                  👉 <strong>Option A (Fastest):</strong> If your email has a <strong>"Log In" button</strong>, simply click the button in your email to authenticate instantly!
-                </p>
-                <p className="text-muted-foreground text-[11px] leading-relaxed">
-                  👉 <strong>Option B:</strong> If your email contains a <strong>6-digit code</strong>, type it into the box below.
+                <p className="text-muted-foreground text-[11px]">
+                  Check your inbox for the 6-digit verification code and enter it below.
                 </p>
               </div>
 
@@ -438,23 +435,25 @@ function LoginPage() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="admin-otp">6-Digit OTP Code (if shown in email)</Label>
+                <Label htmlFor="admin-otp">Enter 6-Digit OTP Code</Label>
                 <Input
                   id="admin-otp"
                   type="text"
                   inputMode="numeric"
                   autoComplete="one-time-code"
                   maxLength={6}
+                  autoFocus
+                  required
                   value={adminOtp}
                   onChange={(e) => setAdminOtp(e.target.value.replace(/\D/g, ""))}
                   placeholder="••••••"
-                  className="text-center font-mono text-2xl font-bold tracking-[0.3em]"
+                  className="text-center font-mono text-3xl font-extrabold tracking-[0.35em] h-14"
                 />
               </div>
 
-              <Button type="submit" className="w-full gap-2" disabled={loading || adminOtp.length < 6}>
+              <Button type="submit" className="w-full gap-2 text-sm h-11" disabled={loading || adminOtp.length < 6}>
                 <KeyRound className="h-4 w-4" />
-                {loading ? "Verifying..." : "Verify OTP & Access Console"}
+                {loading ? "Verifying..." : "Verify OTP & Enter Admin Console"}
               </Button>
 
               <div className="flex items-center justify-center pt-2">
