@@ -119,6 +119,61 @@ function LoginPage() {
     return () => clearInterval(interval);
   }, [resendCountdown]);
 
+  // Listen for auto-login if the user clicked the "Log In" button inside their email
+  useEffect(() => {
+    async function checkExistingSession() {
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.user && portalRole === "admin") {
+        const { data: roleRow } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", data.session.user.id)
+          .eq("role", "admin")
+          .maybeSingle();
+
+        if (roleRow) {
+          await recordLoginActivity({
+            userId: data.session.user.id,
+            email: data.session.user.email || email,
+            fullName: data.session.user.user_metadata?.full_name || "Admin",
+            role: "admin",
+          });
+          toast.success("Admin authorized successfully from email!");
+          navigate({ to: "/dashboard/admin" });
+        }
+      }
+    }
+
+    checkExistingSession();
+
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if ((event === "SIGNED_IN" || event === "USER_UPDATED" || event === "TOKEN_REFRESHED") && session?.user && portalRole === "admin") {
+        const { data: roleRow } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", session.user.id)
+          .eq("role", "admin")
+          .maybeSingle();
+
+        if (roleRow) {
+          await recordLoginActivity({
+            userId: session.user.id,
+            email: session.user.email || email,
+            fullName: session.user.user_metadata?.full_name || "Admin",
+            role: "admin",
+          });
+          toast.success("Admin authorized successfully from email!");
+          navigate({ to: "/dashboard/admin" });
+        } else {
+          await supabase.auth.signOut();
+          toast.error("Access denied. This email is not authorized as an Admin.");
+        }
+      }
+    });
+
+    return () => sub.subscription.unsubscribe();
+  }, [portalRole, navigate, email]);
+
   const activePortal = loginPortals.find((p) => p.value === portalRole) || loginPortals[0];
 
   // Citizen / Lawyer / NGO Password Login
@@ -160,11 +215,13 @@ function LoginPage() {
       return;
     }
 
+    const redirectUrl = `${window.location.origin}/auth/login?role=admin&verified=true`;
     setLoading(true);
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim(),
       options: {
         shouldCreateUser: false,
+        emailRedirectTo: redirectUrl,
       },
     });
     setLoading(false);
@@ -176,7 +233,10 @@ function LoginPage() {
         return;
       }
       // If general error, try standard OTP request
-      const retry = await supabase.auth.signInWithOtp({ email: email.trim() });
+      const retry = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: { emailRedirectTo: redirectUrl },
+      });
       if (retry.error) {
         toast.error(retry.error.message);
         return;
@@ -243,7 +303,11 @@ function LoginPage() {
   async function onResendOtp() {
     if (resendCountdown > 0) return;
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOtp({ email: email.trim() });
+    const redirectUrl = `${window.location.origin}/auth/login?role=admin&verified=true`;
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: { emailRedirectTo: redirectUrl },
+    });
     setLoading(false);
     if (error) {
       toast.error(error.message);
@@ -342,11 +406,24 @@ function LoginPage() {
               </Button>
             </form>
           ) : (
-            /* STEP 2: Enter 6-digit OTP */
+            /* STEP 2: Enter 6-digit OTP or Click Email Button */
             <form onSubmit={onVerifyAdminOtp} className="space-y-4">
-              <div className="flex items-center justify-between text-xs">
+              <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 text-xs text-foreground space-y-2">
+                <div className="flex items-center gap-2 font-semibold text-primary">
+                  <span className="flex h-2 w-2 rounded-full bg-primary animate-ping" />
+                  <span>Email Dispatched! Check your Inbox</span>
+                </div>
+                <p className="text-muted-foreground text-[11px] leading-relaxed">
+                  👉 <strong>Option A (Fastest):</strong> If your email has a <strong>"Log In" button</strong>, simply click the button in your email to authenticate instantly!
+                </p>
+                <p className="text-muted-foreground text-[11px] leading-relaxed">
+                  👉 <strong>Option B:</strong> If your email contains a <strong>6-digit code</strong>, type it into the box below.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between text-xs pt-1">
                 <span className="text-muted-foreground">
-                  Code sent to: <strong className="text-foreground">{email}</strong>
+                  Sent to: <strong className="text-foreground">{email}</strong>
                 </span>
                 <button
                   type="button"
@@ -361,14 +438,13 @@ function LoginPage() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="admin-otp">6-Digit OTP Code</Label>
+                <Label htmlFor="admin-otp">6-Digit OTP Code (if shown in email)</Label>
                 <Input
                   id="admin-otp"
                   type="text"
                   inputMode="numeric"
                   autoComplete="one-time-code"
                   maxLength={6}
-                  required
                   value={adminOtp}
                   onChange={(e) => setAdminOtp(e.target.value.replace(/\D/g, ""))}
                   placeholder="••••••"
