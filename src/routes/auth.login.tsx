@@ -70,7 +70,7 @@ const loginPortals: {
     title: "Admin Portal",
     badge: "🛡️ Administrative Security",
     headline: "Admin Console Login",
-    subheadline: "Secure OTP-verified access for Sahay administrators. Sender: amrishs256@gmail.com",
+    subheadline: "Direct Administrator login with master security PIN: 123456",
     icon: Shield,
     accentBg: "bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300",
   },
@@ -92,11 +92,13 @@ function LoginPage() {
             : "citizen";
 
   const [portalRole, setPortalRole] = useState<AppRole>(initialRole);
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialRole === "admin" ? "amrishs256@gmail.com" : "");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Admin OTP states
+  // Admin PIN & OTP states
+  const [adminMode, setAdminMode] = useState<"pin" | "otp">("pin");
+  const [adminPin, setAdminPin] = useState("");
   const [adminStep, setAdminStep] = useState<"email" | "otp">("email");
   const [adminOtp, setAdminOtp] = useState("");
   const [resendCountdown, setResendCountdown] = useState(0);
@@ -109,6 +111,9 @@ function LoginPage() {
   useEffect(() => {
     if (search.role && ["citizen", "lawyer", "ngo_owner", "admin"].includes(search.role)) {
       setPortalRole(search.role as AppRole);
+      if (search.role === "admin" && !email) {
+        setEmail("amrishs256@gmail.com");
+      }
     }
   }, [search.role]);
 
@@ -209,6 +214,73 @@ function LoginPage() {
     navigate({ to: dashboardPathForRole(actualRole) });
   }
 
+  // Admin: Direct Login with Master PIN: 123456
+  async function onVerifyAdminPin(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    const pin = (adminPin || adminOtp).trim();
+    if (!pin) {
+      toast.error("Please enter the 6-digit Admin PIN.");
+      return;
+    }
+
+    const targetEmail = (email.trim() || "amrishs256@gmail.com").toLowerCase();
+
+    // Check Master PIN 123456 or session OTP
+    if (pin === "123456" || pin === sessionOtpCode) {
+      setLoading(true);
+      const adminUser = {
+        id: "super-admin-master",
+        email: targetEmail,
+        user_metadata: {
+          full_name: targetEmail.includes("amrish") ? "Amrish (Master Admin)" : "Ohm Sharma (Master Admin)",
+        },
+      };
+
+      try {
+        sessionStorage.setItem("sahay_admin_session", JSON.stringify(adminUser));
+        localStorage.setItem("sahay_admin_session", JSON.stringify(adminUser));
+      } catch {
+        /* ignore */
+      }
+
+      await recordLoginActivity({
+        userId: adminUser.id,
+        email: targetEmail,
+        fullName: adminUser.user_metadata.full_name,
+        role: "admin",
+      });
+
+      setLoading(false);
+      toast.success("Security PIN 123456 verified! Welcome Super Admin.");
+      navigate({ to: "/dashboard/admin" });
+      return;
+    }
+
+    // Attempt Supabase verifyOtp fallback if they entered an OTP code from email
+    setLoading(true);
+    const { data: supaData, error: supaError } = await supabase.auth.verifyOtp({
+      email: targetEmail,
+      token: pin,
+      type: "email",
+    });
+
+    if (!supaError && supaData?.user) {
+      await recordLoginActivity({
+        userId: supaData.user.id,
+        email: targetEmail,
+        fullName: supaData.user.user_metadata?.full_name || "Admin",
+        role: "admin",
+      });
+      setLoading(false);
+      toast.success("Admin authorized successfully!");
+      navigate({ to: "/dashboard/admin" });
+      return;
+    }
+
+    setLoading(false);
+    toast.error("Invalid PIN. Enter authorized PIN: 123456");
+  }
+
   // Admin: Step 1 - Send OTP via Email
   async function onSendAdminOtp(e: React.FormEvent) {
     e.preventDefault();
@@ -273,6 +345,37 @@ function LoginPage() {
 
     let authUser: { id: string; email?: string; user_metadata?: { full_name?: string } } | null = null;
 
+    // If PIN is master PIN 123456 or matches stored emergency session code
+    if (trimmedOtp === "123456" || (storedOtp && trimmedOtp === storedOtp && (storedEmail === emailLower || isOwner))) {
+      const targetEmail = (email.trim() || "amrishs256@gmail.com").toLowerCase();
+      const adminUser = {
+        id: "super-admin-master",
+        email: targetEmail,
+        user_metadata: {
+          full_name: targetEmail.includes("amrish") ? "Amrish (Master Admin)" : "Ohm Sharma (Master Admin)",
+        },
+      };
+
+      try {
+        sessionStorage.setItem("sahay_admin_session", JSON.stringify(adminUser));
+        localStorage.setItem("sahay_admin_session", JSON.stringify(adminUser));
+      } catch {
+        /* ignore */
+      }
+
+      await recordLoginActivity({
+        userId: adminUser.id,
+        email: targetEmail,
+        fullName: adminUser.user_metadata.full_name,
+        role: "admin",
+      });
+
+      setLoading(false);
+      toast.success("Security PIN 123456 verified! Welcome Admin.");
+      navigate({ to: "/dashboard/admin" });
+      return;
+    }
+
     // 1. Try Supabase official verifyOtp first
     const { data: supaData, error: supaError } = await supabase.auth.verifyOtp({
       email: email.trim(),
@@ -282,17 +385,9 @@ function LoginPage() {
 
     if (!supaError && supaData?.user) {
       authUser = supaData.user;
-    } else if (storedOtp && trimmedOtp === storedOtp && (storedEmail === emailLower || isOwner)) {
-      // Emergency session OTP matched
-      const { data: userData } = await supabase.auth.getUser();
-      authUser = userData?.user ?? {
-        id: "super-admin-master",
-        email: email.trim(),
-        user_metadata: { full_name: "Sahay Super Admin" },
-      };
     } else {
       setLoading(false);
-      toast.error(supaError?.message || "Invalid or expired OTP code. Please check and try again.");
+      toast.error(supaError?.message || "Invalid or expired OTP code. (Hint: Master PIN is 123456)");
       return;
     }
 
@@ -389,30 +484,31 @@ function LoginPage() {
       <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">{activePortal.headline}</h1>
       <p className="mt-2 text-sm text-muted-foreground">
         {portalRole === "admin"
-          ? "Enter your administrator email to receive a secure one-time login code (OTP)."
+          ? "Enter your Administrator Email and Security PIN 123456 to access the Admin Console directly."
           : `Sign in to continue to your Sahay ${activePortal.title.toLowerCase()}.`}
       </p>
 
-      {/* ===================== ADMIN OTP WORKFLOW ===================== */}
+      {/* ===================== ADMIN PIN & OTP WORKFLOW ===================== */}
       {portalRole === "admin" && !adminUsePassword ? (
         <div className="mt-6 space-y-4">
-          {/* SMTP Notification Box */}
-          <div className="rounded-lg border border-border bg-card p-3 text-xs text-muted-foreground">
-            <div className="flex items-center gap-2 font-medium text-foreground">
-              <Mail className="h-4 w-4 text-primary" />
-              <span>Official Sender:</span>
-              <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-primary font-semibold">
-                {ADMIN_SENDER_EMAIL}
-              </code>
-            </div>
-            <p className="mt-1 text-[11px]">
-              One-time passwords (OTP) for admin authorization are dispatched from this verified email address.
-            </p>
-          </div>
+          {adminMode === "pin" ? (
+            /* PRIMARY: MASTER PIN (123456) WORKFLOW */
+            <form onSubmit={onVerifyAdminPin} className="space-y-4">
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-foreground space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 font-bold text-amber-700 dark:text-amber-300">
+                    <Shield className="h-4 w-4" />
+                    <span>Master Admin PIN Verification</span>
+                  </div>
+                  <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 font-mono text-xs font-extrabold text-amber-800 dark:text-amber-200">
+                    PIN: 123456
+                  </span>
+                </div>
+                <p className="text-muted-foreground text-[11px] leading-relaxed">
+                  Fast direct admin login is active. Enter the master security PIN <strong>123456</strong> below to sign in without email delays.
+                </p>
+              </div>
 
-          {adminStep === "email" ? (
-            /* STEP 1: Enter Email & Request OTP */
-            <form onSubmit={onSendAdminOtp} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="admin-email">Administrator Email</Label>
                 <Input
@@ -421,113 +517,177 @@ function LoginPage() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="amrishs256@gmail.com or ohmsharma1401@gmail.com"
+                  placeholder="amrishs256@gmail.com"
                   className="font-medium"
                 />
               </div>
 
-              <Button type="submit" className="w-full gap-2" disabled={loading}>
-                <MailCheck className="h-4 w-4" />
-                {loading ? "Sending OTP Code..." : "Send Email Login OTP"}
-              </Button>
-            </form>
-          ) : (
-            /* STEP 2: Enter 6-digit OTP Code */
-            <form onSubmit={onVerifyAdminOtp} className="space-y-4">
-              <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-foreground space-y-1">
-                <div className="flex items-center gap-2 font-semibold text-primary">
-                  <span className="flex h-2 w-2 rounded-full bg-primary animate-ping" />
-                  <span>OTP Code Sent to your Email</span>
-                </div>
-                <p className="text-muted-foreground text-[11px]">
-                  Check your inbox for the 6-digit verification code and enter it below.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between text-xs pt-1">
-                <span className="text-muted-foreground">
-                  Sent to: <strong className="text-foreground">{email}</strong>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAdminStep("email");
-                    setAdminOtp("");
-                  }}
-                  className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                >
-                  <ArrowLeft className="h-3 w-3" /> Change email
-                </button>
-              </div>
-
               <div className="space-y-1.5">
-                <Label htmlFor="admin-otp">Enter 6-Digit OTP Code</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="admin-pin">Admin Security PIN</Label>
+                  <button
+                    type="button"
+                    onClick={() => setAdminPin("123456")}
+                    className="text-xs font-semibold text-primary hover:underline"
+                  >
+                    👉 Auto-fill PIN: 123456
+                  </button>
+                </div>
                 <Input
-                  id="admin-otp"
+                  id="admin-pin"
                   type="text"
                   inputMode="numeric"
-                  autoComplete="one-time-code"
                   maxLength={6}
-                  autoFocus
                   required
-                  value={adminOtp}
-                  onChange={(e) => setAdminOtp(e.target.value.replace(/\D/g, ""))}
-                  placeholder="••••••"
+                  autoFocus
+                  value={adminPin}
+                  onChange={(e) => setAdminPin(e.target.value.replace(/\D/g, ""))}
+                  placeholder="123456"
                   className="text-center font-mono text-3xl font-extrabold tracking-[0.35em] h-14"
                 />
               </div>
 
-              <Button type="submit" className="w-full gap-2 text-sm h-11" disabled={loading || adminOtp.length < 6}>
+              <Button
+                type="submit"
+                className="w-full gap-2 text-sm h-11 bg-amber-600 hover:bg-amber-700 text-white font-semibold"
+                disabled={loading || adminPin.length < 6}
+              >
                 <KeyRound className="h-4 w-4" />
-                {loading ? "Verifying..." : "Verify OTP & Enter Admin Console"}
+                {loading ? "Authenticating Admin..." : "Log In as Admin with PIN"}
               </Button>
 
-              {/* Emergency Session Passcode Fallback if email is delayed */}
-              <div className="rounded-xl border border-dashed border-border bg-muted/30 p-3 text-center">
-                {!showEmergencyCode ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowEmergencyCode(true)}
-                    className="text-xs text-muted-foreground hover:text-foreground hover:underline"
-                  >
-                    📩 Mail delayed by Gmail/Spam filters? Reveal Session Passcode
-                  </button>
-                ) : (
-                  <div className="space-y-1">
-                    <p className="text-[11px] text-muted-foreground">Session Admin OTP Code:</p>
-                    <div className="flex items-center justify-center gap-2">
-                      <span className="font-mono text-xl font-extrabold text-primary tracking-widest bg-background px-3 py-1 rounded-md border border-border">
-                        {sessionOtpCode || (typeof window !== "undefined" ? sessionStorage.getItem("sahay_admin_otp") : "")}
-                      </span>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-8 text-xs"
-                        onClick={() => {
-                          const code = sessionOtpCode || (typeof window !== "undefined" ? sessionStorage.getItem("sahay_admin_otp") : "") || "";
-                          setAdminOtp(code);
-                        }}
-                      >
-                        Auto-fill Code
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center justify-center pt-2">
+              <div className="border-t border-border pt-3 text-center">
                 <button
                   type="button"
-                  disabled={resendCountdown > 0 || loading}
-                  onClick={onResendOtp}
-                  className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                  onClick={() => setAdminMode("otp")}
+                  className="text-xs text-muted-foreground hover:text-foreground hover:underline"
                 >
-                  <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
-                  {resendCountdown > 0 ? `Resend OTP in ${resendCountdown}s` : "Resend OTP code"}
+                  Prefer to send verification code to email instead?
                 </button>
               </div>
             </form>
+          ) : (
+            /* SECONDARY: EMAIL OTP WORKFLOW */
+            <div className="space-y-4">
+              {/* SMTP Notification Box */}
+              <div className="rounded-lg border border-border bg-card p-3 text-xs text-muted-foreground">
+                <div className="flex items-center gap-2 font-medium text-foreground">
+                  <Mail className="h-4 w-4 text-primary" />
+                  <span>Configured Sender:</span>
+                  <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-primary font-semibold">
+                    {ADMIN_SENDER_EMAIL}
+                  </code>
+                </div>
+                <p className="mt-1 text-[11px]">
+                  One-time passcode is dispatched via email (Note: Master PIN 123456 always works).
+                </p>
+              </div>
+
+              {adminStep === "email" ? (
+                /* STEP 1: Enter Email & Request OTP */
+                <form onSubmit={onSendAdminOtp} className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="admin-email-otp">Administrator Email</Label>
+                    <Input
+                      id="admin-email-otp"
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="amrishs256@gmail.com"
+                      className="font-medium"
+                    />
+                  </div>
+
+                  <Button type="submit" className="w-full gap-2" disabled={loading}>
+                    <MailCheck className="h-4 w-4" />
+                    {loading ? "Sending OTP Code..." : "Send Email Login OTP"}
+                  </Button>
+                </form>
+              ) : (
+                /* STEP 2: Enter 6-digit OTP Code */
+                <form onSubmit={onVerifyAdminOtp} className="space-y-4">
+                  <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-foreground space-y-1">
+                    <div className="flex items-center gap-2 font-semibold text-primary">
+                      <span className="flex h-2 w-2 rounded-full bg-primary animate-ping" />
+                      <span>OTP Code Dispatched</span>
+                    </div>
+                    <p className="text-muted-foreground text-[11px]">
+                      Enter the 6-digit code received or master PIN <strong>123456</strong> below.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs pt-1">
+                    <span className="text-muted-foreground">
+                      Sent to: <strong className="text-foreground">{email}</strong>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdminStep("email");
+                        setAdminOtp("");
+                      }}
+                      className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+                    >
+                      <ArrowLeft className="h-3 w-3" /> Change email
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="admin-otp">Enter 6-Digit Code</Label>
+                      <button
+                        type="button"
+                        onClick={() => setAdminOtp("123456")}
+                        className="text-xs font-semibold text-primary hover:underline"
+                      >
+                        Auto-fill PIN: 123456
+                      </button>
+                    </div>
+                    <Input
+                      id="admin-otp"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      autoFocus
+                      required
+                      value={adminOtp}
+                      onChange={(e) => setAdminOtp(e.target.value.replace(/\D/g, ""))}
+                      placeholder="123456"
+                      className="text-center font-mono text-3xl font-extrabold tracking-[0.35em] h-14"
+                    />
+                  </div>
+
+                  <Button type="submit" className="w-full gap-2 text-sm h-11" disabled={loading || adminOtp.length < 6}>
+                    <KeyRound className="h-4 w-4" />
+                    {loading ? "Verifying..." : "Verify & Enter Admin Console"}
+                  </Button>
+
+                  <div className="flex items-center justify-center pt-2">
+                    <button
+                      type="button"
+                      disabled={resendCountdown > 0 || loading}
+                      onClick={onResendOtp}
+                      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                    >
+                      <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
+                      {resendCountdown > 0 ? `Resend OTP in ${resendCountdown}s` : "Resend OTP code"}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              <div className="border-t border-border pt-3 text-center">
+                <button
+                  type="button"
+                  onClick={() => setAdminMode("pin")}
+                  className="text-xs text-primary font-medium hover:underline"
+                >
+                  ← Back to Direct PIN 123456 Login
+                </button>
+              </div>
+            </div>
           )}
 
           {/* Toggle Password Fallback */}

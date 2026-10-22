@@ -46,6 +46,12 @@ export function DashboardShell({
   async function signOut() {
     await qc.cancelQueries();
     qc.clear();
+    try {
+      sessionStorage.removeItem("sahay_admin_session");
+      localStorage.removeItem("sahay_admin_session");
+    } catch {
+      /* ignore */
+    }
     await supabase.auth.signOut();
     toast.success("Signed out");
     navigate({ to: "/auth/login", replace: true });

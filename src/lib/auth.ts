@@ -23,17 +23,47 @@ export function useSession() {
       if (mounted) setRole((data?.role as AppRole) ?? "citizen");
     }
 
+    function checkAdminSession() {
+      if (typeof window !== "undefined") {
+        try {
+          const stored = sessionStorage.getItem("sahay_admin_session") || localStorage.getItem("sahay_admin_session");
+          if (stored) {
+            const adminUser = JSON.parse(stored);
+            if (adminUser?.email) {
+              setUser(adminUser);
+              setRole("admin");
+              setLoading(false);
+              return true;
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      return false;
+    }
+
+    if (checkAdminSession()) return;
+
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
-      setUser(data.session?.user ?? null);
-      if (data.session?.user) loadRole(data.session.user.id);
+      if (data.session?.user) {
+        setUser(data.session.user);
+        loadRole(data.session.user.id);
+      } else if (!checkAdminSession()) {
+        setUser(null);
+      }
       setLoading(false);
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      setUser(session?.user ?? null);
-      if (session?.user) loadRole(session.user.id);
-      else setRole(null);
+      if (session?.user) {
+        setUser(session.user);
+        loadRole(session.user.id);
+      } else if (!checkAdminSession()) {
+        setUser(null);
+        setRole(null);
+      }
     });
 
     return () => {
