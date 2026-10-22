@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX IF NOT EXISTS reviews_unique_citizen_ngo ON public.reviews (citizen_id, ngo_id) WHERE ngo_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS reviews_unique_citizen_lawyer ON public.reviews (citizen_id, lawyer_id) WHERE lawyer_id IS NOT NULL;
