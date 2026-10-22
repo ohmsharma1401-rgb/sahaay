@@ -7,7 +7,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { dashboardPathForRole, type AppRole } from "@/lib/auth";
 import { recordLoginActivity } from "@/lib/activity";
-import { User, Scale, Building2, Shield, AlertCircle } from "lucide-react";
+import {
+  User,
+  Scale,
+  Building2,
+  Shield,
+  AlertCircle,
+  KeyRound,
+  MailCheck,
+  ArrowLeft,
+  RefreshCw,
+  Mail,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/auth/login")({
@@ -57,13 +68,15 @@ const loginPortals: {
   {
     value: "admin",
     title: "Admin Portal",
-    badge: "🛡️ Administrative Console",
+    badge: "🛡️ Administrative Security",
     headline: "Admin Console Login",
-    subheadline: "Restricted administrative portal to monitor users, verifications, and platform activity.",
+    subheadline: "Secure OTP-verified access for Sahay administrators. Sender: ohmsharma1401@gmail.com",
     icon: Shield,
     accentBg: "bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300",
   },
 ];
+
+const ADMIN_SENDER_EMAIL = "ohmsharma1401@gmail.com";
 
 function LoginPage() {
   const search = Route.useSearch();
@@ -82,6 +95,13 @@ function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Admin OTP states
+  const [adminStep, setAdminStep] = useState<"email" | "otp">("email");
+  const [adminOtp, setAdminOtp] = useState("");
+  const [resendCountdown, setResendCountdown] = useState(0);
+  const [adminUsePassword, setAdminUsePassword] = useState(false);
+
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -90,19 +110,28 @@ function LoginPage() {
     }
   }, [search.role]);
 
+  // Handle countdown timer for OTP resend
+  useEffect(() => {
+    if (resendCountdown <= 0) return;
+    const interval = setInterval(() => {
+      setResendCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [resendCountdown]);
+
   const activePortal = loginPortals.find((p) => p.value === portalRole) || loginPortals[0];
 
-  async function onSubmit(e: React.FormEvent) {
+  // Citizen / Lawyer / NGO Password Login
+  async function onSubmitPassword(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     setLoading(false);
     if (error) {
       toast.error(error.message);
       return;
     }
 
-    // Determine user role
     const { data: roleRow } = await supabase
       .from("user_roles")
       .select("role")
@@ -112,7 +141,6 @@ function LoginPage() {
 
     const actualRole = (roleRow?.role as AppRole) ?? "citizen";
 
-    // Track login activity
     await recordLoginActivity({
       userId: data.user!.id,
       email: data.user!.email || email,
@@ -122,6 +150,107 @@ function LoginPage() {
 
     toast.success(`Welcome back (${actualRole})`);
     navigate({ to: dashboardPathForRole(actualRole) });
+  }
+
+  // Admin: Step 1 - Send OTP via Email
+  async function onSendAdminOtp(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.trim()) {
+      toast.error("Please enter your admin email address.");
+      return;
+    }
+
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: {
+        shouldCreateUser: false,
+      },
+    });
+    setLoading(false);
+
+    if (error) {
+      // If user doesn't exist or shouldCreateUser prevented it, try fallback
+      if (error.message.toLowerCase().includes("signups not allowed")) {
+        toast.error("This email is not registered. Please contact the platform owner.");
+        return;
+      }
+      // If general error, try standard OTP request
+      const retry = await supabase.auth.signInWithOtp({ email: email.trim() });
+      if (retry.error) {
+        toast.error(retry.error.message);
+        return;
+      }
+    }
+
+    setAdminStep("otp");
+    setResendCountdown(60);
+    toast.success(`Verification code sent to ${email.trim()}! Please check your inbox.`);
+  }
+
+  // Admin: Step 2 - Verify OTP
+  async function onVerifyAdminOtp(e: React.FormEvent) {
+    e.preventDefault();
+    if (!adminOtp.trim() || adminOtp.trim().length < 6) {
+      toast.error("Please enter the complete 6-digit OTP code.");
+      return;
+    }
+
+    setLoading(true);
+    const { data, error } = await supabase.auth.verifyOtp({
+      email: email.trim(),
+      token: adminOtp.trim(),
+      type: "email",
+    });
+    setLoading(false);
+
+    if (error) {
+      toast.error(error.message || "Invalid or expired OTP code.");
+      return;
+    }
+
+    if (!data.user) {
+      toast.error("Could not verify session. Please try again.");
+      return;
+    }
+
+    // Verify user has admin role
+    const { data: roleRow, error: roleError } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", data.user.id)
+      .eq("role", "admin")
+      .maybeSingle();
+
+    if (roleError || !roleRow) {
+      await supabase.auth.signOut();
+      toast.error("Access denied. This account does not have Admin privileges.");
+      return;
+    }
+
+    await recordLoginActivity({
+      userId: data.user.id,
+      email: data.user.email || email,
+      fullName: data.user.user_metadata?.full_name || "Admin",
+      role: "admin",
+    });
+
+    toast.success("Admin authenticated successfully!");
+    navigate({ to: "/dashboard/admin" });
+  }
+
+  // Admin Resend OTP
+  async function onResendOtp() {
+    if (resendCountdown > 0) return;
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithOtp({ email: email.trim() });
+    setLoading(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setResendCountdown(60);
+    toast.success(`New code sent to ${email.trim()}!`);
   }
 
   return (
@@ -137,7 +266,11 @@ function LoginPage() {
               <button
                 type="button"
                 key={p.value}
-                onClick={() => setPortalRole(p.value)}
+                onClick={() => {
+                  setPortalRole(p.value);
+                  setAdminStep("email");
+                  setAdminOtp("");
+                }}
                 className={cn(
                   "flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition-all",
                   isSelected
@@ -164,52 +297,182 @@ function LoginPage() {
 
       {/* Title */}
       <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">{activePortal.headline}</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Sign in to continue to your Sahay {activePortal.title.toLowerCase()}.</p>
+      <p className="mt-2 text-sm text-muted-foreground">
+        {portalRole === "admin"
+          ? "Enter your administrator email to receive a secure one-time login code (OTP)."
+          : `Sign in to continue to your Sahay ${activePortal.title.toLowerCase()}.`}
+      </p>
 
-      {/* Login Form */}
-      <form onSubmit={onSubmit} className="mt-6 space-y-4">
-        <div className="space-y-1.5">
-          <Label htmlFor="email">Email address</Label>
-          <Input
-            id="email"
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder={portalRole === "admin" ? "admin@sahay.org" : "you@example.com"}
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="password">Password</Label>
-            <Link to="/auth/forgot-password" className="text-xs font-medium text-primary hover:underline">
-              Forgot password?
-            </Link>
+      {/* ===================== ADMIN OTP WORKFLOW ===================== */}
+      {portalRole === "admin" && !adminUsePassword ? (
+        <div className="mt-6 space-y-4">
+          {/* SMTP Notification Box */}
+          <div className="rounded-lg border border-border bg-card p-3 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 font-medium text-foreground">
+              <Mail className="h-4 w-4 text-primary" />
+              <span>Official Sender:</span>
+              <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-primary font-semibold">
+                {ADMIN_SENDER_EMAIL}
+              </code>
+            </div>
+            <p className="mt-1 text-[11px]">
+              One-time passwords (OTP) for admin authorization are dispatched from this verified email address.
+            </p>
           </div>
-          <Input
-            id="password"
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-          />
-        </div>
 
-        {portalRole === "admin" && (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200 flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>Admin credentials are required to access the Administrative Console.</span>
+          {adminStep === "email" ? (
+            /* STEP 1: Enter Email & Request OTP */
+            <form onSubmit={onSendAdminOtp} className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="admin-email">Administrator Email</Label>
+                <Input
+                  id="admin-email"
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="admin@sahay.org or ohmsharma1401@gmail.com"
+                  className="font-medium"
+                />
+              </div>
+
+              <Button type="submit" className="w-full gap-2" disabled={loading}>
+                <MailCheck className="h-4 w-4" />
+                {loading ? "Sending OTP Code..." : "Send Email Login OTP"}
+              </Button>
+            </form>
+          ) : (
+            /* STEP 2: Enter 6-digit OTP */
+            <form onSubmit={onVerifyAdminOtp} className="space-y-4">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">
+                  Code sent to: <strong className="text-foreground">{email}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminStep("email");
+                    setAdminOtp("");
+                  }}
+                  className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+                >
+                  <ArrowLeft className="h-3 w-3" /> Change email
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="admin-otp">6-Digit OTP Code</Label>
+                <Input
+                  id="admin-otp"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  required
+                  value={adminOtp}
+                  onChange={(e) => setAdminOtp(e.target.value.replace(/\D/g, ""))}
+                  placeholder="••••••"
+                  className="text-center font-mono text-2xl font-bold tracking-[0.3em]"
+                />
+              </div>
+
+              <Button type="submit" className="w-full gap-2" disabled={loading || adminOtp.length < 6}>
+                <KeyRound className="h-4 w-4" />
+                {loading ? "Verifying..." : "Verify OTP & Access Console"}
+              </Button>
+
+              <div className="flex items-center justify-center pt-2">
+                <button
+                  type="button"
+                  disabled={resendCountdown > 0 || loading}
+                  onClick={onResendOtp}
+                  className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                >
+                  <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
+                  {resendCountdown > 0 ? `Resend OTP in ${resendCountdown}s` : "Resend OTP code"}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Toggle Password Fallback */}
+          <div className="border-t border-border pt-4 text-center">
+            <button
+              type="button"
+              onClick={() => setAdminUsePassword(true)}
+              className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+            >
+              Sign in with password instead
+            </button>
           </div>
-        )}
+        </div>
+      ) : (
+        /* ===================== PASSWORD WORKFLOW (Citizen, Lawyer, NGO, or Admin Password Fallback) ===================== */
+        <form onSubmit={onSubmitPassword} className="mt-6 space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="email">Email address</Label>
+            <Input
+              id="email"
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder={portalRole === "admin" ? "admin@sahay.org" : "you@example.com"}
+            />
+          </div>
 
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? "Signing in..." : `Sign in to ${activePortal.title}`}
-        </Button>
-      </form>
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="password">Password</Label>
+              <Link to="/auth/forgot-password" className="text-xs font-medium text-primary hover:underline">
+                Forgot password?
+              </Link>
+            </div>
+            <Input
+              id="password"
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+            />
+          </div>
 
-      {/* Create account link if not admin */}
+          {portalRole === "admin" && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>Admin Password Mode</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAdminUsePassword(false)}
+                className="font-semibold text-amber-900 dark:text-amber-100 hover:underline"
+              >
+                Use Email OTP
+              </button>
+            </div>
+          )}
+
+          <Button type="submit" className="w-full" disabled={loading}>
+            {loading ? "Signing in..." : `Sign in to ${activePortal.title}`}
+          </Button>
+
+          {portalRole === "admin" && (
+            <div className="text-center pt-2">
+              <button
+                type="button"
+                onClick={() => setAdminUsePassword(false)}
+                className="text-xs font-semibold text-primary hover:underline inline-flex items-center gap-1"
+              >
+                <MailCheck className="h-3.5 w-3.5" /> Switch to Email OTP Login
+              </button>
+            </div>
+          )}
+        </form>
+      )}
+
+      {/* Footer links */}
       {portalRole !== "admin" ? (
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Don't have a {activePortal.title.toLowerCase()} account yet?{" "}
@@ -223,7 +486,7 @@ function LoginPage() {
         </p>
       ) : (
         <p className="mt-6 text-center text-xs text-muted-foreground">
-          Citizen or professional?{" "}
+          Looking for support?{" "}
           <button
             type="button"
             onClick={() => setPortalRole("citizen")}
