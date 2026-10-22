@@ -34,7 +34,9 @@ export const Route = createFileRoute("/_authenticated/dashboard/admin")({
   beforeLoad: async ({ context }) => {
     const user = (context as { user?: { id: string; email?: string } }).user;
     if (!user) throw redirect({ to: "/auth/login?role=admin" });
-    const isSuperAdmin = user.email?.toLowerCase() === "ohmsharma1401@gmail.com";
+    const isSuperAdmin =
+      user.email?.toLowerCase() === "ohmsharma1401@gmail.com" ||
+      user.email?.toLowerCase() === "amrishs256@gmail.com";
     if (isSuperAdmin) return;
     const { data, error } = await supabase
       .from("user_roles")

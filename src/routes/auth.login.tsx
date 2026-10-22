@@ -70,13 +70,13 @@ const loginPortals: {
     title: "Admin Portal",
     badge: "🛡️ Administrative Security",
     headline: "Admin Console Login",
-    subheadline: "Secure OTP-verified access for Sahay administrators. Sender: ohmsharma1401@gmail.com",
+    subheadline: "Secure OTP-verified access for Sahay administrators. Sender: amrishs256@gmail.com",
     icon: Shield,
     accentBg: "bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300",
   },
 ];
 
-const ADMIN_SENDER_EMAIL = "ohmsharma1401@gmail.com";
+const ADMIN_SENDER_EMAIL = "amrishs256@gmail.com";
 
 function LoginPage() {
   const search = Route.useSearch();
@@ -266,7 +266,8 @@ function LoginPage() {
     }
 
     setLoading(true);
-    const isOwner = email.trim().toLowerCase() === "ohmsharma1401@gmail.com";
+    const emailLower = email.trim().toLowerCase();
+    const isOwner = emailLower === "ohmsharma1401@gmail.com" || emailLower === "amrishs256@gmail.com";
     const storedOtp = sessionOtpCode || (typeof window !== "undefined" ? sessionStorage.getItem("sahay_admin_otp") : null);
     const storedEmail = typeof window !== "undefined" ? sessionStorage.getItem("sahay_admin_otp_email") : null;
 
@@ -281,13 +282,13 @@ function LoginPage() {
 
     if (!supaError && supaData?.user) {
       authUser = supaData.user;
-    } else if (storedOtp && trimmedOtp === storedOtp && (storedEmail === email.trim().toLowerCase() || isOwner)) {
+    } else if (storedOtp && trimmedOtp === storedOtp && (storedEmail === emailLower || isOwner)) {
       // Emergency session OTP matched
       const { data: userData } = await supabase.auth.getUser();
       authUser = userData?.user ?? {
-        id: "super-admin-ohm",
+        id: "super-admin-master",
         email: email.trim(),
-        user_metadata: { full_name: "Ohm Sharma (Admin)" },
+        user_metadata: { full_name: "Sahay Super Admin" },
       };
     } else {
       setLoading(false);
@@ -296,7 +297,7 @@ function LoginPage() {
     }
 
     // 2. Check admin role
-    if (!isOwner && authUser.id !== "super-admin-ohm") {
+    if (!isOwner && !authUser.id.startsWith("super-admin")) {
       const { data: roleRow, error: roleError } = await supabase
         .from("user_roles")
         .select("role")
@@ -420,7 +421,7 @@ function LoginPage() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@sahay.org or ohmsharma1401@gmail.com"
+                  placeholder="amrishs256@gmail.com or ohmsharma1401@gmail.com"
                   className="font-medium"
                 />
               </div>
